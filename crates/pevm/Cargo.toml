@@ -80,3 +80,7 @@ name = "mainnet"
 [[bench]]
 harness = false
 name = "gigagas"
+
+[[bench]]
+harness = false
+name = "erc"
