@@ -83,4 +83,4 @@ name = "gigagas"
 
 [[bench]]
 harness = false
-name = "erc"
+name = "general"

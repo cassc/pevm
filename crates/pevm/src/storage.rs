@@ -17,6 +17,8 @@ use thiserror::Error;
 
 use crate::{BuildIdentityHasher, BuildSuffixHasher};
 
+use crate::deserializer::deserialize_str_as_u64;
+
 // TODO: Port EVM types to [primitives.rs] to focus solely
 // on the [Storage] interface here.
 
@@ -26,12 +28,13 @@ pub struct EvmAccount {
     /// The account's balance.
     pub balance: U256,
     /// The account's nonce.
+    #[serde(deserialize_with = "deserialize_str_as_u64")]
     pub nonce: u64,
     /// The optional code hash of the account.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code_hash: Option<B256>,
     /// The account's optional code.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub code: Option<EvmCode>,
     /// The account's storage.
     pub storage: HashMap<U256, U256, FxBuildHasher>,

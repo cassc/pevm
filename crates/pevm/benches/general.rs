@@ -3,15 +3,15 @@
 // TODO: More fancy benchmarks & plots.
 use std::{collections::BTreeMap, fs::File, io::BufReader, num::NonZeroUsize, sync::Arc, thread};
 
-use alloy_primitives::{keccak256, Address, Bytes};
+use alloy_primitives::{keccak256, Address, Bytes, TxKind, U256};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use hashbrown::HashMap;
 use pevm::{
     chain::PevmEthereum, BlockHashes, BuildSuffixHasher, Bytecodes, EvmAccount, InMemoryStorage,
     Pevm,
 };
-use revm::primitives::{BlockEnv, Env, SpecId};
-use revme::cmd::statetest::models::{SpecName, Test, TransactionParts};
+use revm::primitives::{BlockEnv, Bytecode, SpecId, TxEnv};
+use revme::cmd::statetest::models::{Env, SpecName, Test, TransactionParts};
 use serde::Deserialize;
 
 // Better project structure
@@ -32,12 +32,10 @@ static GLOBAL: rpmalloc::RpMalloc = rpmalloc::RpMalloc;
 
 /// A single test unit.
 #[derive(Debug, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct TestUnit {
     /// Test info is optional
     #[serde(default, rename = "_info")]
     pub info: Option<serde_json::Value>,
-
     pub env: Env,
     pub pre: HashMap<Address, EvmAccount, BuildSuffixHasher>,
     pub post: BTreeMap<SpecName, Vec<Test>>,
@@ -80,34 +78,63 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     let test = test.first_key_value().unwrap().1;
 
     println!("test_unit: {:?}", test);
-    let accounts: HashMap<Address, EvmAccount, BuildSuffixHasher> = test.pre;
+    let accounts: HashMap<Address, EvmAccount, BuildSuffixHasher> = test.pre.clone();
 
     let mut bytecodes: Bytecodes = Bytecodes::default();
 
     // iter over accounts and get the bytecodes
-    for (address, account) in accounts.iter() {
-        if let Some(bytecode) = account.code.clone() {
-            let code_hash = account
-                .code_hash
-                .unwrap_or_else(|| keccak256(&bytecode.clone().into()));
-            bytecodes.insert(code_hash, bytecode);
+    accounts.iter().for_each(|(_address, account)| {
+        if let Some(ref bytecode) = account.code.clone() {
+            let bytes = Bytecode::try_from(bytecode.clone()).unwrap().bytes();
+            let code_hash = account.code_hash.unwrap_or_else(|| keccak256(bytes));
+            bytecodes.insert(code_hash, bytecode.clone());
         }
-    }
+    });
 
     let bytecodes = Arc::new(bytecodes);
 
     let block_hashes: BlockHashes = BlockHashes::default();
     let block_hashes = Arc::new(block_hashes);
 
-    let block_env = BlockEnv::default();
+    let mut block_env = BlockEnv::default();
     let spec_id = SpecId::SHANGHAI;
 
-    let txs = todo!();
+    block_env.basefee = test.env.current_base_fee.unwrap();
+    block_env.difficulty = test.env.current_difficulty;
+    block_env.timestamp = test.env.current_timestamp;
+    block_env.coinbase = test.env.current_coinbase;
+    block_env.gas_limit = test.env.current_gas_limit;
+    block_env.number = test.env.current_number;
+
+    let mut tx = TxEnv {
+        caller: test.transaction.sender.unwrap(),
+        ..Default::default()
+    };
+
+    tx.gas_price = test.transaction.gas_price.unwrap();
+    tx.gas_priority_fee = test.transaction.max_priority_fee_per_gas;
+    tx.blob_hashes = test.transaction.blob_versioned_hashes.clone();
+    tx.max_fee_per_blob_gas = test.transaction.max_fee_per_blob_gas;
+    tx.data = test.transaction.data[0].clone();
+    tx.gas_limit = test.transaction.gas_limit[0].try_into().unwrap();
+    let value = &test.transaction.value[0];
+    tx.value = if let Some(stripped) = value.strip_prefix("0x") {
+        U256::from_str_radix(stripped, 16).unwrap()
+    } else {
+        U256::from_str_radix(value, 16).unwrap()
+    };
+    tx.nonce = u64::try_from(test.transaction.nonce).ok();
+    let to = match test.transaction.to {
+        Some(add) => TxKind::Call(add),
+        None => TxKind::Create,
+    };
+    tx.transact_to = to;
+
+    let txs = vec![tx];
+    let storage = InMemoryStorage::new(accounts, Arc::clone(&bytecodes), Arc::clone(&block_hashes));
 
     c.bench_function("parallel_execute_erc_function", |b| {
         b.iter(|| {
-            let storage =
-                InMemoryStorage::new(accounts, Arc::clone(&bytecodes), Arc::clone(&block_hashes));
             pevm.execute_revm_parallel(
                 black_box(&chain),
                 black_box(&storage),
@@ -116,6 +143,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 black_box(txs.clone()),
                 black_box(concurrency_level),
             )
+            .unwrap();
         })
     });
 }

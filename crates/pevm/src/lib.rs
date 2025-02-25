@@ -219,6 +219,7 @@ mod compat;
 mod mv_memory;
 mod pevm;
 pub use pevm::{execute_revm_sequential, Pevm, PevmError, PevmResult};
+mod deserializer;
 mod scheduler;
 mod storage;
 pub use storage::{
