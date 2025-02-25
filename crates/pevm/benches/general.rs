@@ -8,10 +8,12 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use hashbrown::HashMap;
 use pevm::{
     chain::PevmEthereum, BlockHashes, BuildSuffixHasher, Bytecodes, EvmAccount, InMemoryStorage,
-    Pevm,
+    Pevm, Storage,
 };
-use revm::primitives::{BlockEnv, Bytecode, SpecId, TxEnv};
-use revme::cmd::statetest::models::{Env, SpecName, Test, TransactionParts};
+use revm::primitives::{
+    Account, AccountInfo, BlockEnv, Bytecode, EvmStorage, EvmStorageSlot, SpecId, TxEnv,
+};
+use revme::cmd::statetest::models::{Env, SpecName, Test, TestSuite, TransactionParts};
 use serde::Deserialize;
 
 // Better project structure
@@ -30,23 +32,23 @@ static GLOBAL: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 #[global_allocator]
 static GLOBAL: rpmalloc::RpMalloc = rpmalloc::RpMalloc;
 
-/// A single test unit.
-#[derive(Debug, PartialEq, Eq, Deserialize)]
-pub struct TestUnit {
-    /// Test info is optional
-    #[serde(default, rename = "_info")]
-    pub info: Option<serde_json::Value>,
-    pub env: Env,
-    pub pre: HashMap<Address, EvmAccount, BuildSuffixHasher>,
-    pub post: BTreeMap<SpecName, Vec<Test>>,
-    pub transaction: TransactionParts,
-    #[serde(default)]
-    pub out: Option<Bytes>,
-}
+// /// A single test unit.
+// #[derive(Debug, PartialEq, Eq, Deserialize)]
+// pub struct TestUnit {
+//     /// Test info is optional
+//     #[serde(default, rename = "_info")]
+//     pub info: Option<serde_json::Value>,
+//     pub env: Env,
+//     pub pre: HashMap<Address, EvmAccount, BuildSuffixHasher>,
+//     pub post: BTreeMap<SpecName, Vec<Test>>,
+//     pub transaction: TransactionParts,
+//     #[serde(default)]
+//     pub out: Option<Bytes>,
+// }
 
-/// The top level test suite.
-#[derive(Debug, PartialEq, Eq, Deserialize)]
-struct TestSuite(pub BTreeMap<String, TestUnit>);
+// /// The top level test suite.
+// #[derive(Debug, PartialEq, Eq, Deserialize)]
+// struct TestSuite(pub BTreeMap<String, TestUnit>);
 
 /// Benchmark for ERC transactions
 pub fn criterion_benchmark(c: &mut Criterion) {
@@ -77,17 +79,49 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     let test = suite.0;
     let test = test.first_key_value().unwrap().1;
 
-    println!("test_unit: {:?}", test);
-    let accounts: HashMap<Address, EvmAccount, BuildSuffixHasher> = test.pre.clone();
-
     let mut bytecodes: Bytecodes = Bytecodes::default();
+
+    println!("test_unit: {:?}", test);
+    let mut accounts: HashMap<Address, EvmAccount, BuildSuffixHasher> = HashMap::default();
+    test.pre.iter().for_each(|(address, account)| {
+        let code_hash = keccak256(&account.code);
+        let code = match account.code.len() > 0 {
+            true => Some(Bytecode::new_raw(account.code.clone())),
+            false => None,
+        };
+
+        let storage: EvmStorage = account
+            .storage
+            .iter()
+            .map(|(k, v)| {
+                (
+                    *k,
+                    EvmStorageSlot {
+                        original_value: *v,
+                        present_value: *v,
+                        is_cold: true,
+                    },
+                )
+            })
+            .collect();
+
+        let account = Account {
+            info: AccountInfo {
+                nonce: account.nonce,
+                balance: account.balance,
+                code,
+                code_hash,
+            },
+            storage,
+            ..Default::default()
+        };
+        accounts.insert(*address, account.into());
+    });
 
     // iter over accounts and get the bytecodes
     accounts.iter().for_each(|(_address, account)| {
         if let Some(ref bytecode) = account.code.clone() {
-            let bytes = Bytecode::try_from(bytecode.clone()).unwrap().bytes();
-            let code_hash = account.code_hash.unwrap_or_else(|| keccak256(bytes));
-            bytecodes.insert(code_hash, bytecode.clone());
+            bytecodes.insert(account.code_hash.unwrap(), bytecode.clone());
         }
     });
 
@@ -132,18 +166,36 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
     let txs = vec![tx];
     let storage = InMemoryStorage::new(accounts, Arc::clone(&bytecodes), Arc::clone(&block_hashes));
+    let r = pevm
+        .execute_revm_parallel(
+            black_box(&chain),
+            black_box(&storage),
+            black_box(spec_id),
+            black_box(block_env.clone()),
+            black_box(txs.clone()),
+            black_box(concurrency_level),
+        )
+        .unwrap();
+    println!("result: {:?}", r);
+
+    // dump output to json file
+    let output = serde_json::to_string(&r[0].state).unwrap();
+    let output_file = std::path::PathBuf::from("pevm.output.state.json");
+    std::fs::write(output_file, output).unwrap();
 
     c.bench_function("parallel_execute_erc_function", |b| {
         b.iter(|| {
-            pevm.execute_revm_parallel(
-                black_box(&chain),
-                black_box(&storage),
-                black_box(spec_id),
-                black_box(block_env.clone()),
-                black_box(txs.clone()),
-                black_box(concurrency_level),
-            )
-            .unwrap();
+            // let r = pevm
+            //     .execute_revm_parallel(
+            //         black_box(&chain),
+            //         black_box(&storage),
+            //         black_box(spec_id),
+            //         black_box(block_env.clone()),
+            //         black_box(txs.clone()),
+            //         black_box(concurrency_level),
+            //     )
+            //     .unwrap();
+            // println!("result: {:?}", r);
         })
     });
 }
