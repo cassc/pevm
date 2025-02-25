@@ -1,6 +1,5 @@
-//! Benchmark mainnet blocks with needed state loaded in memory.
+//! Benchmark performance for provided transactions
 
-// TODO: More fancy benchmarks & plots.
 use std::{fs::File, io::BufReader, num::NonZeroUsize, sync::Arc, thread};
 
 use alloy_primitives::{keccak256, Address, TxKind, U256};
