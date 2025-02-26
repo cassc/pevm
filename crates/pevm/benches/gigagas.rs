@@ -27,7 +27,7 @@ pub mod erc20;
 pub mod uniswap;
 
 ///  large gas value
-const GIGA_GAS: u64 = 1_000_000_000;
+const GIGA_GAS: u64 = 10_000_000_000;
 
 #[cfg(feature = "global-alloc")]
 #[global_allocator]
@@ -64,13 +64,27 @@ pub fn bench(c: &mut Criterion, name: &str, storage: InMemoryStorage, txs: Vec<T
             )
         })
     });
+
+    group.bench_function("Parallel Single", |b| {
+        let txs = vec![txs[0].clone()];
+        b.iter(|| {
+            pevm.execute_revm_parallel(
+                black_box(&chain),
+                black_box(&storage),
+                black_box(spec_id),
+                black_box(block_env.clone()),
+                black_box(txs.clone()),
+                black_box(concurrency_level),
+            )
+        })
+    });
     group.finish();
 }
 
 /// Benchmarks the execution time of raw token transfers.
 pub fn bench_raw_transfers(c: &mut Criterion) {
-    let block_size = (GIGA_GAS as f64 / common::RAW_TRANSFER_GAS_LIMIT as f64).ceil() as usize;
-    // Skip the built-in precompiled contracts addresses.
+    let block_size = 50_000; // (GIGA_GAS as f64 / common::RAW_TRANSFER_GAS_LIMIT as f64).ceil() as usize;
+                             // Skip the built-in precompiled contracts addresses.
     const START_ADDRESS: usize = 1000;
     const MINER_ADDRESS: usize = 0;
     let storage = InMemoryStorage::new(
@@ -103,9 +117,12 @@ pub fn bench_raw_transfers(c: &mut Criterion) {
 
 /// Benchmarks the execution time of ERC-20 token transfers.
 pub fn bench_erc20(c: &mut Criterion) {
-    let block_size = (GIGA_GAS as f64 / erc20::ESTIMATED_GAS_USED as f64).ceil() as usize;
+    let block_size = 50_000; // (GIGA_GAS as f64 / erc20::ESTIMATED_GAS_USED as f64).ceil() as usize;
     let (mut state, bytecodes, txs) = erc20::generate_cluster(block_size, 1, 1);
     state.insert(Address::ZERO, EvmAccount::default()); // Beneficiary
+
+    gen_test_suite(&state, &txs, format!("erc20_{}k.json", block_size / 1000));
+
     bench(
         c,
         "Independent ERC20",
@@ -116,7 +133,7 @@ pub fn bench_erc20(c: &mut Criterion) {
 
 /// Benchmarks the execution time of Uniswap V3 swap transactions.
 pub fn bench_uniswap(c: &mut Criterion) {
-    let block_size = (GIGA_GAS as f64 / uniswap::ESTIMATED_GAS_USED as f64).ceil() as usize;
+    let block_size = 50_000; // (GIGA_GAS as f64 / uniswap::ESTIMATED_GAS_USED as f64).ceil() as usize;
     let mut final_state = ChainState::from_iter([(Address::ZERO, EvmAccount::default())]); // Beneficiary
     let mut final_bytecodes = Bytecodes::default();
     let mut final_txs = Vec::<TxEnv>::new();
@@ -132,6 +149,14 @@ pub fn bench_uniswap(c: &mut Criterion) {
         InMemoryStorage::new(final_state, Arc::new(final_bytecodes), Default::default()),
         final_txs,
     );
+}
+
+fn gen_test_suite(state: &ChainState, txs: &[TxEnv], filename: String) {
+    // use std::fs::File;
+    // use std::io::Write;
+
+    // let mut file = File::create(filename).unwrap();
+    // let mut txs_json = Vec::new();
 }
 
 /// Runs a series of benchmarks to evaluate the performance of different transaction types.
