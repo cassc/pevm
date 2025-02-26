@@ -78,7 +78,7 @@ impl Default for AccountBasic {
 pub struct LegacyCode {
     /// Bytecode with 32 zero bytes padding.
     // TODO: Store unpadded bytecode and pad on revm conversion
-    bytecode: Bytes,
+    pub bytecode: Bytes,
     /// Original bytes length.
     original_len: usize,
     /// Jump table.

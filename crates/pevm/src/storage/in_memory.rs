@@ -9,8 +9,8 @@ use crate::{AccountBasic, Storage};
 /// A storage that stores chain data in memory.
 #[derive(Debug, Clone, Default)]
 pub struct InMemoryStorage {
-    accounts: ChainState,
-    bytecodes: Arc<Bytecodes>,
+    pub accounts: ChainState,
+    pub bytecodes: Arc<Bytecodes>,
     block_hashes: Arc<BlockHashes>,
 }
 
