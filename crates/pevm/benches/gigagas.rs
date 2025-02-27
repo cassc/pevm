@@ -215,8 +215,8 @@ fn dump_test_suite(
                     .bytecodes
                     .get(codehash)
                     .map(|code| match code {
-                        EvmCode::Legacy(code) => format!("0x{:0x}", code.bytecode),
-                        EvmCode::Eof(code) => format!("0x{:0x}", code),
+                        EvmCode::Legacy(code) => format!("{:0x}", code.bytecode),
+                        EvmCode::Eof(code) => format!("{:0x}", code), // 0x prefix added by hex formatter
                         EvmCode::Eip7702(_) => panic!("Not supported"),
                     })
                     .unwrap_or_default()
