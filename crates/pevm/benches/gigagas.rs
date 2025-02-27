@@ -52,12 +52,7 @@ pub fn bench(c: &mut Criterion, name: &str, storage: InMemoryStorage, txs: Vec<T
     let mut pevm = Pevm::default();
     let mut group = c.benchmark_group(name);
 
-    gen_test_suite(
-        &block_env,
-        &storage,
-        &txs,
-        format!("{}_test_suite.json", name),
-    );
+    dump_test_suite(&block_env, &storage, &txs, name.into());
     group.bench_function("Sequential", |b| {
         b.iter(|| {
             execute_revm_sequential(
@@ -174,90 +169,122 @@ struct PreAccount {
     storage: HashMap<String, String>,
 }
 
-fn gen_test_suite(
+fn dump_test_suite(
     block_env: &BlockEnv,
     storage: &InMemoryStorage,
-    txs: &Vec<TxEnv>,
+    txs: &[TxEnv],
     filename: String,
 ) {
     use std::fs::File;
     use std::io::Write;
 
-    let mut file = File::create(filename).unwrap();
+    let json_dir = std::path::PathBuf::from("json").join(&filename);
 
-    let tx = txs[0].clone();
+    std::fs::create_dir_all(&json_dir).expect("Failed to create directory");
 
-    let mut pre: HashMap<String, PreAccount> = HashMap::default();
+    let mut first = true;
 
-    storage.accounts.iter().for_each(|(address, account)| {
-        let mut storage_map = HashMap::default();
-        account.storage.iter().for_each(|(key, value)| {
-            storage_map.insert(format!("{:x}", key), format!("{:x}", value));
-        });
-        let code = match &account.code {
-            Some(EvmCode::Legacy(code)) => code.bytecode.0.encode_hex::<String>(),
-            _ => "".into(),
-        };
-        pre.insert(
-            format!("{:x}", address),
-            PreAccount {
-                balance: format!("{:x}", account.balance),
-                nonce: format!("{:x}", account.nonce),
-                code,
-                storage: storage_map,
+    for tx in txs {
+        let tx = tx.clone();
+        let output_json = json_dir.join(format!(
+            "{}0x{:032x}.json",
+            {
+                if first {
+                    "head"
+                } else {
+                    ""
+                }
             },
-        );
-    });
+            tx.caller
+        ));
 
-    // test_suite.insert("pevm_auto_test".into(), test_unit);
-    // let test_suite = TestSuite(test_suite);
-    // dump to file as json
+        let mut file = File::create(output_json).unwrap();
 
-    let json = json!({
-    "pevm_auto_test": json!(
-        {
-            "env": json!({
+        let mut pre: HashMap<String, PreAccount> = HashMap::default();
+
+        storage.accounts.iter().for_each(|(address, account)| {
+            let mut storage_map = HashMap::default();
+            account.storage.iter().for_each(|(key, value)| {
+                if !value.eq(&U256::default()) {
+                    storage_map.insert(format!("0x{:064x}", key), format!("0x{:064x}", value));
+                }
+            });
+
+            let code: String = if let Some(ref codehash) = account.code_hash {
+                storage
+                    .bytecodes
+                    .get(codehash)
+                    .map(|code| match code {
+                        EvmCode::Legacy(code) => format!("0x{:0x}", code.bytecode),
+                        EvmCode::Eof(code) => format!("0x{:0x}", code),
+                        EvmCode::Eip7702(_) => panic!("Not supported"),
+                    })
+                    .unwrap_or_default()
+            } else {
+                "".into()
+            };
+
+            pre.insert(
+                format!("0x{:032x}", address),
+                PreAccount {
+                    balance: format!("0x{:064x}", account.balance),
+                    nonce: format!("0x{:032x}", account.nonce),
+                    code,
+                    storage: storage_map,
+                },
+            );
+        });
+
+        let block_gas_limit = block_env.gas_limit.saturating_to::<u64>();
+
+        let pre = if first { json!(pre) } else { json!({}) };
+
+        let json = json!({
+        "pevm_auto_test": json!(
+            {
+                "env": json!({
                     "currentCoinbase": block_env.coinbase,
                     "currentDifficulty": block_env.difficulty,
-                    "currentGasLimit": block_env.gas_limit,
+                    "currentGasLimit": block_gas_limit,
                     "currentNumber": block_env.number,
                     "currentTimestamp": block_env.timestamp,
                     "currentBaseFee": block_env.basefee,
                     "currentRandom": block_env.prevrandao,
-            }),
-            "pre": json!({}),
-            "post": json!({
-                "Shanghai": json!([{
-                    "indexes": {
-                        "data": 0,
-                        "gas": 0,
-                        "value": 0
-                    },
-                    "hash": "0xb71a1e992df50c04d0247829676adce5898a419e0c00de9a76141765e22fdbc9",
-                    "logs": "0xb71a1e992df50c04d0247829676adce5898a419e0c00de9a76141765e22fdbc9",
-                }])}),
-            "transaction": json!([
-                {
+                }),
+                "pre": pre,
+                "post": json!({
+                    "Shanghai": json!([{
+                        "indexes": {
+                            "data": 0,
+                            "gas": 0,
+                            "value": 0
+                        },
+                        "hash": "0xffaaffee2df50c04d0247829676adce5898a419e0c00de9a76141765e22fdbc9",
+                        "logs": "0xffaaffee2df50c04d0247829676adce5898a419e0c00de9a76141765e22fdbc9",
+                    }])}),
+                "transaction": json!(
+                    {"data": [tx.data],
+                     "gas_limit": [tx.gas_limit],
+                     "gas_price": tx.gas_price,
+                     "nonce": tx.nonce.unwrap_or_default(),
+                     "sender": tx.caller,
+                     "to": tx.transact_to.to().unwrap(),
+                     "value": [format!("0x{:064x}", tx.value)],
+                     "secretKey": "0xffaaffeed060149eb4365960e6a7a45f334393093061116b197e3240065ff2d8",
+                     "gasLimit": [format!("0x{:032x}", tx.gas_limit)],
+                    }
+                ),
 
-                    "data": [tx.data],
-                    "gas_limit": [tx.gas_limit],
-                    "gas_price": tx.gas_price,
-                    "nonce": tx.nonce.unwrap(),
-                    "sender": tx.caller,
-                    "to": tx.transact_to.to().unwrap(),
-                    "value": [tx.value.to_string()],
-                    "secretKey": "0x45a915e4d060149eb4365960e6a7a45f334393093061116b197e3240065ff2d8"
-
-                }
-            ]),
-
-        })});
-    file.write_all(json.to_string().as_bytes()).unwrap();
+            })});
+        file.write_all(serde_json::to_string_pretty(&json).unwrap().as_bytes())
+            .unwrap();
+        first = false;
+    }
 }
 
 /// Runs a series of benchmarks to evaluate the performance of different transaction types.
 pub fn benchmark_gigagas(c: &mut Criterion) {
-    bench_raw_transfers(c);
+    // bench_raw_transfers(c);
     bench_erc20(c);
     bench_uniswap(c);
 }
