@@ -202,38 +202,40 @@ fn dump_test_suite(
 
         let mut pre: HashMap<String, PreAccount> = HashMap::default();
 
-        storage.accounts.iter().for_each(|(address, account)| {
-            let mut storage_map = HashMap::default();
-            account.storage.iter().for_each(|(key, value)| {
-                if !value.eq(&U256::default()) {
-                    storage_map.insert(format!("0x{:064x}", key), format!("0x{:064x}", value));
-                }
+        if first {
+            storage.accounts.iter().for_each(|(address, account)| {
+                let mut storage_map = HashMap::default();
+                account.storage.iter().for_each(|(key, value)| {
+                    if !value.eq(&U256::default()) {
+                        storage_map.insert(format!("0x{:064x}", key), format!("0x{:064x}", value));
+                    }
+                });
+
+                let code: String = if let Some(ref codehash) = account.code_hash {
+                    storage
+                        .bytecodes
+                        .get(codehash)
+                        .map(|code| match code {
+                            EvmCode::Legacy(code) => format!("{:0x}", code.bytecode),
+                            EvmCode::Eof(code) => format!("{:0x}", code), // 0x prefix added by hex formatter
+                            EvmCode::Eip7702(_) => panic!("Not supported"),
+                        })
+                        .unwrap_or_default()
+                } else {
+                    "".into()
+                };
+
+                pre.insert(
+                    format!("0x{:032x}", address),
+                    PreAccount {
+                        balance: format!("0x{:064x}", account.balance),
+                        nonce: format!("0x{:032x}", account.nonce),
+                        code,
+                        storage: storage_map,
+                    },
+                );
             });
-
-            let code: String = if let Some(ref codehash) = account.code_hash {
-                storage
-                    .bytecodes
-                    .get(codehash)
-                    .map(|code| match code {
-                        EvmCode::Legacy(code) => format!("{:0x}", code.bytecode),
-                        EvmCode::Eof(code) => format!("{:0x}", code), // 0x prefix added by hex formatter
-                        EvmCode::Eip7702(_) => panic!("Not supported"),
-                    })
-                    .unwrap_or_default()
-            } else {
-                "".into()
-            };
-
-            pre.insert(
-                format!("0x{:032x}", address),
-                PreAccount {
-                    balance: format!("0x{:064x}", account.balance),
-                    nonce: format!("0x{:032x}", account.nonce),
-                    code,
-                    storage: storage_map,
-                },
-            );
-        });
+        }
 
         let block_gas_limit = block_env.gas_limit.saturating_to::<u64>();
 
@@ -285,7 +287,7 @@ fn dump_test_suite(
 /// Runs a series of benchmarks to evaluate the performance of different transaction types.
 pub fn benchmark_gigagas(c: &mut Criterion) {
     // bench_raw_transfers(c);
-    bench_erc20(c);
+    // bench_erc20(c);
     bench_uniswap(c);
 }
 
